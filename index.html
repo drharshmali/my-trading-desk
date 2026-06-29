@@ -130,6 +130,7 @@
   <section class="page active" id="dashboard">
     <h2 class="section">📊 Dashboard</h2>
     <div id="index-strip" style="display:none"></div>
+    <div class="panel" id="alert-log" style="display:none;border-left:3px solid var(--accent)"></div>
     <div class="panel" id="market-extra" style="display:none"></div>
     <div class="row" id="dash-ctrl" style="margin-bottom:10px;align-items:center;flex-wrap:wrap">
       <label class="fl" style="margin:0">⚡ Intraday budget ₹:</label>
@@ -139,6 +140,11 @@
       <span style="color:var(--muted);font-size:12px">Best intraday across stocks + Nifty / BankNifty / FinNifty / Sensex</span>
     </div>
     <div class="panel" id="plan-board" style="display:none;border-left:3px solid var(--accent)"></div>
+    <div class="panel" id="index-trades" style="border-left:3px solid var(--accent2)"></div>
+    <div class="panel"><h3>📈 Live Chart <span style="font-weight:400;font-size:12px;color:var(--muted)">TradingView · live during market hours</span></h3>
+      <div class="row" style="margin-bottom:8px"><input id="chart-sym" value="NIFTY" placeholder="NIFTY / RELIANCE / BANKNIFTY / SENSEX" style="max-width:240px" onkeydown="if(event.key==='Enter')loadDashChart()"><button class="btn" onclick="loadDashChart()">Show chart</button></div>
+      <div id="dash-chart-box" style="height:480px;border-radius:9px;overflow:hidden;border:1px solid var(--border)"></div>
+    </div>
     <div class="cards">
       <div class="card"><div class="label">Available Cash</div><div class="value" id="d-cash">—</div><div class="sub">Virtual balance</div></div>
       <div class="card"><div class="label">Portfolio Value</div><div class="value" id="d-equity">—</div><div class="sub">Cash + open positions</div></div>
@@ -445,7 +451,11 @@ const $=id=>document.getElementById(id);
 function inr(n){return '₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});}
 function cls(n){return n>0?'pos':(n<0?'neg':'');}
 function sign(n){return (n>0?'+':'')+inr(n);}
-function toast(m,t='ok'){const e=$('toast');e.textContent=m;e.className='toast show '+t;setTimeout(()=>e.className='toast',2400);}
+function toast(m,t='ok'){const e=$('toast');e.textContent=m;e.className='toast show '+t;clearTimeout(window.__toastT);window.__toastT=setTimeout(()=>e.className='toast',Math.max(3500,Math.min(9000,String(m).length*75)));}
+function logAlert(title,body){window.__alertLog=window.__alertLog||[];window.__alertLog.unshift({t:new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),title,body});window.__alertLog=window.__alertLog.slice(0,40);try{renderAlertLog();}catch(e){}}
+function renderAlertLog(){const el=$('alert-log');if(!el)return;const a=window.__alertLog||[];if(!a.length){el.style.display='none';return;}el.style.display='block';
+  el.innerHTML='<h3>🔔 Alerts <span style="font-weight:400;font-size:12px;color:var(--muted)">recent — nothing missed</span> <button class="btn ghost sm" style="float:right" onclick="window.__alertLog=[];renderAlertLog()">Clear</button></h3>'+
+    '<div style="max-height:240px;overflow:auto">'+a.map(x=>`<div style="padding:5px 0;border-top:1px solid var(--border)"><b>${escH(x.title)}</b> <span style="color:var(--muted);font-size:11px">${x.t}</span>${x.body?'<div style="color:var(--muted);font-size:12px">'+escH(x.body)+'</div>':''}</div>`).join('')+'</div>';}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function today(){return new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}
 function num(v){if(v==null)return null;let s=String(v).trim();if(s===''||s==='-'||s.toLowerCase()==='na'||s.toLowerCase()==='n/a')return null;const neg=/^\(.*\)$/.test(s)||/^-/.test(s);s=s.replace(/[₹$,%()+\s]/g,'').replace(/-/g,'');if(s==='')return null;const n=parseFloat(s);if(isNaN(n))return null;return neg?-n:n;}
@@ -544,6 +554,7 @@ function intradayPicks(budget,n){    // best INTRADAY stock setups (valid only, 
 }
 function renderPlan(){       // ⚡ Dashboard INTRADAY cockpit — stocks + all 4 indices, valid setups only, buy from here
   const el=$('plan-board');if(!el)return;
+  try{renderIndexTrades();}catch(e){}
   const nifty=(window.CHAINS&&window.CHAINS.NIFTY)||window.NIFTY_CHAIN;
   const budget=parseFloat(localStorage.getItem('dashBudget'))||50000;
   const split=Math.max(1,parseInt(localStorage.getItem('dashSplit'))||3);
@@ -584,6 +595,28 @@ function buyCockpitIdx(i){const c=window.__cockpit&&window.__cockpit.idx[i];if(!
   const lots=Math.max(1,Math.floor(per/((c.premium||1)*c.lot)));
   window.__niftyRec={symbol:c.symbol,qty:lots*c.lot,premium:c.premium,tgtPrem:c.tgtPrem,slPrem:c.slPrem,conf:c.conf,note:c.index+' '+c.ot+' '+c.expiry+' · auto intraday'};
   takeNiftyTrade();renderPlan();
+}
+function renderIndexTrades(){   // 📈 dedicated index-only panel: Nifty/BankNifty/FinNifty/Sensex auto trade (entry/target/SL)
+  const el=$('index-trades');if(!el)return;
+  const src=window.CHAINS||(window.NIFTY_CHAIN?{NIFTY:window.NIFTY_CHAIN}:null);
+  el.style.display='block';
+  if(!src){el.innerHTML='<h3>📈 Index Intraday Trades</h3><div style="color:var(--muted)">No index chain loaded — run <b>angel_nifty.cmd</b> (Nifty) or <b>live_ws.cmd</b> (all 4 indices) during market hours.</div>';return;}
+  const names=['NIFTY','BANKNIFTY','FINNIFTY','SENSEX'];
+  const rows=names.filter(k=>src[k]).map(k=>{
+    const c=src[k],call=indexCall(c);
+    if(!call)return `<div style="padding:5px 0;border-top:1px solid var(--border)">📈 <b>${k}</b> <span style="color:var(--muted);font-size:12px">${c.spot?nf(c.spot):''} · no clear setup (wait)</span></div>`;
+    const cl=call.dir==='BULL'?'green':'red',weak=call.conf<40;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border)">
+      <div>📈 <b>${k} ${call.atm} ${call.ot}</b> <span style="color:var(--muted);font-size:12px">${call.conf}%${weak?' (weak)':''} · entry ₹${call.premium} · Tgt ₹${call.tgtPrem||'—'} · SL ₹${call.slPrem||'—'}</span></div>
+      <button class="btn sm ${cl}" onclick="buyIndexCall('${k}')">Buy</button></div>`;}).join('');
+  el.innerHTML=`<h3>📈 Index Intraday Trades <span style="font-weight:400;font-size:12px;color:var(--muted)">auto entry · target · SL</span></h3>${rows||'<div style="color:var(--muted)">No index data yet.</div>'}`;
+}
+function buyIndexCall(k){const src=window.CHAINS||(window.NIFTY_CHAIN?{NIFTY:window.NIFTY_CHAIN}:null);const c=src&&src[k],call=c&&indexCall(c);
+  if(!call||!call.premium){toast('No live premium — run angel_nifty.cmd / live_ws.cmd','err');return;}
+  const per=(parseFloat(localStorage.getItem('dashBudget'))||50000)/Math.max(1,parseInt(localStorage.getItem('dashSplit'))||3);
+  const lots=Math.max(1,Math.floor(per/((call.premium||1)*call.lot)));
+  window.__niftyRec={symbol:call.symbol,qty:lots*call.lot,premium:call.premium,tgtPrem:call.tgtPrem,slPrem:call.slPrem,conf:call.conf,note:k+' '+call.ot+' auto intraday'};
+  takeNiftyTrade();renderIndexTrades();
 }
 function checkSentimentExit(){   // in profit + market turning against you -> "consider selling, booked ₹X"
   const nc=niftyChg(); if(nc==null)return;
@@ -1860,7 +1893,7 @@ function renderManage(){
     <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Side</th><th>LTP</th><th>P&L</th><th>R</th><th>Win%</th><th>Trail SL now</th><th>Suggested action</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="hint" style="margin-top:8px">${mktOpen?'':'<span style="color:var(--yellow)">⚠ Market closed — LTP &amp; P&L only move 9:15–15:30 Mon–Fri.</span> '}P&L is live when <b>live_ws.cmd</b> runs &amp; you are 🔴 Connected. <b>⚠ no feed</b> = that symbol isn\'t in the stream (it now auto-includes scan picks; else add to watch.txt). Sell closes instantly at live price.</div>`;
 }
-function notify(title,body){try{tgSend(title,body);}catch(e){}try{if(!window.Notification)return;if(Notification.permission==='granted')new Notification(title,{body});else if(Notification.permission==='default')Notification.requestPermission().then(pm=>{if(pm==='granted')new Notification(title,{body});});}catch(e){}}
+function notify(title,body){try{logAlert(title,body);}catch(e){}try{tgSend(title,body);}catch(e){}try{if(window.Notification&&Notification.permission==='granted')new Notification(title,{body});}catch(e){}}
 function checkLiveAlerts(){
   if(!window.LIVE||!window.LIVE.data)return;
   window.__alerted=window.__alerted||{};
@@ -1960,7 +1993,7 @@ function reloadJs(src,cb){                        // re-read a sibling .js file 
 }
 function refreshLive(cb){
   reloadJs('live_data.js',ok=>{
-    applyLive();renderLive();checkLiveAlerts();renderManage();   // live LTP -> positions + P&L
+    applyLive();renderDashboard();renderPortfolio();renderLive();checkLiveAlerts();renderManage();   // live LTP -> positions + P&L everywhere
     reloadJs('nifty_chain.js',()=>{                              // live OI -> auto Nifty trade
       try{if(window.NIFTY_CHAIN&&window.__ixMode!=='manual')analyzeNifty(true);}catch(e){}
       renderIndexStrip();renderPlan();onLiveUpdate();
@@ -1971,7 +2004,7 @@ function refreshLive(cb){
 function setLiveRefresh(sec){
   sec=parseInt(sec)||0;localStorage.setItem('liveRefreshSec',sec);
   if(window.__liveTimer){clearInterval(window.__liveTimer);window.__liveTimer=null;}
-  if(sec>0){if(window.Notification&&Notification.permission==='default'){try{Notification.requestPermission();}catch(e){}}
+  if(sec>0){
     window.__liveTimer=setInterval(()=>refreshLive(),sec*1000);refreshLive();
     toast('🔄 Live auto-refresh: every '+sec+'s — P&L + Nifty live');}
   else toast('Live auto-refresh off');
@@ -1986,7 +2019,7 @@ function liveWS(manual){
   if(window.__ws&&window.__ws.readyState<=1){if(manual)toast('Already connected');return;}
   let ws;try{ws=new WebSocket(liveWsUrl());}catch(e){if(manual)toast('Run live_ws.cmd / livemobile.cmd first','err');return;}
   window.__ws=ws;
-  ws.onopen=()=>{window.__wsOn=true;window.__wsWant=true;if(window.Notification&&Notification.permission==='default'){try{Notification.requestPermission();}catch(e){}}toast('🔴 LIVE WebSocket — tick-by-tick');renderLive();};
+  ws.onopen=()=>{window.__wsOn=true;window.__wsWant=true;toast('🔴 LIVE WebSocket — tick-by-tick');renderLive();};
   ws.onmessage=(ev)=>{                                  // throttle full re-render to ~2.5/sec (data arrives ~3/sec)
     window.__wsBuf=ev.data;
     if(window.__wsThrottle)return;
@@ -1995,7 +2028,7 @@ function liveWS(manual){
       if(m.live)window.LIVE={fetchedAt:m.fetchedAt,data:m.live};
       if(m.chains)window.CHAINS=m.chains;
       window.__wsAngel=m.angel;
-      applyLive();renderLive();renderManage();checkLiveAlerts();
+      applyLive();renderDashboard();renderPortfolio();renderLive();renderManage();checkLiveAlerts();
       if(window.__ixMode!=='manual'){try{analyzeNifty(true);}catch(e){}}
       renderIndexStrip();renderPlan();onLiveUpdate();
     },400);
@@ -2007,11 +2040,16 @@ function stopLiveWS(){window.__wsWant=false;if(window.__ws){try{window.__ws.clos
 function onIndexChange(){if(window.CHAINS||window.NIFTY_CHAIN){try{analyzeNifty();}catch(e){}}}
 
 /* init */
+function tvSym(s){s=(s||'NIFTY').trim().toUpperCase();const m={NIFTY:'NSE:NIFTY',BANKNIFTY:'NSE:BANKNIFTY',FINNIFTY:'NSE:CNXFINANCE',SENSEX:'BSE:SENSEX'};if(m[s])return m[s];return s.includes(':')?s:'NSE:'+s;}
+function loadDashChart(){const el=$('dash-chart-box');if(!el)return;const sym=tvSym($('chart-sym')?$('chart-sym').value:'NIFTY');el.innerHTML='';
+  if(typeof TradingView!=='undefined'){try{new TradingView.widget({container_id:'dash-chart-box',symbol:sym,interval:'5',timezone:'Asia/Kolkata',theme:'light',style:'1',locale:'en',autosize:true,hide_side_toolbar:false,allow_symbol_change:true,studies:['VWAP@tv-basicstudies','RSI@tv-basicstudies','Volume@tv-basicstudies']});}catch(e){el.innerHTML='<div class="empty">'+sym+' — chart unavailable</div>';}}
+  else{el.innerHTML='<div class="empty">Check internet — TradingView did not load.</div>';}}
 function initOverview(){const cont=$('overview-widget');const inner=document.createElement('div');inner.className='tradingview-widget-container__widget';cont.appendChild(inner);const s=document.createElement('script');s.src='https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js';s.async=true;
   s.innerHTML=JSON.stringify({colorTheme:'light',dateRange:'1D',showChart:true,locale:'en',isTransparent:true,width:'100%',height:400,tabs:[{title:'Indices',symbols:[{s:'NSE:NIFTY',d:'Nifty 50'},{s:'NSE:BANKNIFTY',d:'Bank Nifty'},{s:'BSE:SENSEX',d:'Sensex'},{s:'NSE:CNXFINANCE',d:'Fin Nifty'}]},{title:'Forex/Comm',symbols:[{s:'FX:USDINR',d:'USD/INR'},{s:'MCX:GOLD1!',d:'Gold'},{s:'MCX:SILVER1!',d:'Silver'},{s:'MCX:CRUDEOIL1!',d:'Crude'}]}]});cont.appendChild(s);}
 function tickClock(){$('clock').textContent=new Date().toLocaleString('en-IN',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'});}
 
 applyLive();renderAll();renderLive();renderManage();checkLiveAlerts();initOverview();tickClock();setInterval(tickClock,1000);
+setTimeout(()=>{try{loadDashChart();}catch(e){}},800);   // tv.js loads async — give it a moment
 /* resume live auto-refresh if it was on; refresh management view every minute for the 3:15 reminder */
 (function(){const sec=parseInt(localStorage.getItem('liveRefreshSec'))||0;if(sec>0)setLiveRefresh(sec);setInterval(renderManage,60000);})();
 
@@ -2025,6 +2063,8 @@ if(window.NIFTY_CHAIN){try{analyzeNifty(true);}catch(e){}}
 renderIndexStrip();renderPlan();renderMarketExtra();
 /* try the true-tick WebSocket bridge (live_ws.cmd) — silent if not running */
 try{liveWS();}catch(e){}
+/* keep trying to connect until the bridge is up — so P&L goes live automatically even if you open the laptop late */
+setInterval(function(){if(!window.__wsOn){try{liveWS();}catch(e){}}},8000);
 
 /* populate saved AI keys into Settings fields */
 (function(){const c=loadAI();const g=$('s-gemini');if(g){g.value=c.gemini||'';$('s-gemini-model').value=c.geminiModel||'gemini-2.0-flash';$('s-claude').value=c.claude||'';$('s-claude-model').value=c.claudeModel||'claude-sonnet-4-6';}const lw=$('s-livews');if(lw)lw.value=localStorage.getItem('liveWsUrl')||'';
